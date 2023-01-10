@@ -1,0 +1,74 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+set -e
+
+if [[ $# -lt 2 ]]; then
+    echo "Usage: termux-sandbox <new|login> <directory>"
+    echo "You can override \`\$TERMUX_MAIN_PACKAGE_FORMAT\` to download bootstrap with an another package manager."
+    exit 1
+fi
+
+for cmd in curl python proot; do
+    if ! command -v $cmd >/dev/null; then
+        echo "termux-sandbox: error: \`$cmd\` is not installed"
+        exit 1
+    fi
+done
+
+case $1 in
+    new)
+        mkdir "$2" # dies if it exists
+        cd "$2"
+
+        mkdir linkerconfig
+        cp /linkerconfig/ld.config.txt linkerconfig/
+        mkdir -p "./$PREFIX"
+
+        cd "./$PREFIX"
+        mkdir ../../cache
+        mkdir ../home
+
+        arch=$(uname -m)
+        case $arch in
+            armv7l|armv8l) arch="arm";;
+        esac
+        case $TERMUX_MAIN_PACKAGE_FORMAT in
+            debian) URL="https://github.com/termux/termux-packages/releases/download/bootstrap-2023.01.08-r1%2Bapt-android-7/bootstrap-$arch.zip";;
+            pacman) URL="https://github.com/termux-pacman/termux-packages/releases/download/bootstrap-2023.01.08-r1%2Bpacman-android-7/bootstrap-$arch.zip";;
+            *) echo "termux-sandbox: unknown package format: $TERMUX_MAIN_PACKAGE_FORMAT"; exit 1;;
+        esac
+        echo "Downloading bootstrap..."
+        curl -fL "$URL" -o bootstrap.zip
+        # there could be an another python 7-liner to verify checksums but the script will exit anyway if curl gets some error
+
+        echo "Unpacking bootstrap..."
+        unzip -q bootstrap.zip
+        rm bootstrap.zip
+
+        echo "Creating symlinks..."
+        # os.symlink is much faster than `ln -s`
+        cat <<END | python
+import os;
+
+symlinks = open("SYMLINKS.txt");
+for symlink in symlinks:
+    symlink = symlink.strip().split("←");
+    os.symlink(*symlink);
+symlinks.close();
+END
+        rm SYMLINKS.txt
+    ;;
+    login)
+        proot --kill-on-exit \
+            --rootfs="$2" \
+            --bind=/dev \
+            --bind=/proc \
+            --bind=/sys \
+            --bind=/data/dalvik-cache \
+            --bind=/apex \
+            --bind=/system \
+            --bind=/vendor \
+            --cwd="$HOME" \
+            "$PREFIX/bin/login"
+    ;;
+esac
